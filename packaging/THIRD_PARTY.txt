@@ -1,0 +1,9 @@
+Zoria Blur - third-party components
+
+* FFmpeg (ffmpeg.exe, ffprobe.exe and DLLs in engine\_internal\bin): BtbN FFmpeg-Builds, GPL build (libx264).
+  Licensed under the GNU GPL v3; source: https://ffmpeg.org / https://github.com/BtbN/FFmpeg-Builds.
+  Full license text: FFMPEG_LICENSE.txt (next to this file).
+* ONNX Runtime + DirectML (MIT), NumPy (BSD), OpenCV (Apache-2.0), Python (PSF).
+* YOLOX person detector weights (Apache-2.0, Megvii).
+* InsightFace SCRFD / ArcFace weights: NON-COMMERCIAL research use only. A paid release needs a commercial
+  license from InsightFace or replacement models (see README "Licenses").

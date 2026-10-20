@@ -1,0 +1,17 @@
+models/*.onnx
+models/*.zip
+__pycache__/
+*.pyc
+out/
+work/
+*.mp4
+*.mov
+*.mkv
+dist/
+build/
+*.spec
+.venv/
+bin/
+.venv-dml/
+.venv-cuda/
+!docs/demo/*.mp4

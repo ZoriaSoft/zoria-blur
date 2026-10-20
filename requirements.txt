@@ -1,0 +1,9 @@
+# Core (CPU). Tested with Python 3.12 on Linux; all packages ship Windows wheels.
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
+onnxruntime==1.31.0
+# Optional GPU backends - install INSTEAD of onnxruntime (only one ORT package at a time):
+#   Windows, any DX12 GPU (AMD/Intel/NVIDIA):  pip install onnxruntime-directml
+#   NVIDIA + CUDA:                             pip install onnxruntime-gpu
+# Optional: bundled ffmpeg binary if ffmpeg is not on PATH:  pip install imageio-ffmpeg
+# Dev only (tests/eval_wider.py reads WIDER .mat files; the engine itself does not use scipy):  pip install scipy
