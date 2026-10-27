@@ -12,6 +12,7 @@ import '../strings.dart';
 import '../theme.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/export_panel.dart';
+import '../widgets/result_view.dart';
 import '../widgets/sidebar.dart';
 import 'editor.dart';
 import 'setup_wizard.dart';
@@ -117,11 +118,12 @@ class _HomeScreenState extends State<HomeScreen> {
         if (st.wizardOpen) return SetupWizard(st: st);
         final c = context.pal;
         final editing = st.stage == Stage.editing || st.stage == Stage.exporting || st.stage == Stage.done;
-        final dropEnabled = st.stage == Stage.start || st.stage == Stage.ready;
+        final dropEnabled = st.stage == Stage.start || st.stage == Stage.ready || st.stage == Stage.done;
         Widget center = switch (st.stage) {
           Stage.start => _Welcome(st: st, dragging: _dragging, onPick: _pickVideo),
           Stage.ready => _scroll(_ReadyView(st: st, onPick: _pickVideo)),
           Stage.analyzing => _scroll(_AnalyzeView(st: st)),
+          Stage.done => ResultView(st: st),
           _ => EditorCenter(st: st),
         };
         center = DropTarget(
@@ -159,12 +161,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                           Sidebar(st: st, onOpenVideo: _pickVideo),
                           Expanded(child: center),
-                          if (editing) Inspector(st: st, onExport: _export, width: inspectorW),
+                          if (st.stage == Stage.done)
+                            ResultPanel(st: st, onNewVideo: _pickVideo, width: inspectorW)
+                          else if (editing)
+                            Inspector(st: st, onExport: _export, width: inspectorW),
                         ]);
                       }),
                     ),
-                    if (st.stage == Stage.exporting || st.stage == Stage.done)
-                      Positioned.fill(child: ExportOverlay(st: st)),
+                    if (st.stage == Stage.exporting) Positioned.fill(child: ExportOverlay(st: st)),
                   ]),
                 ),
                 _StatusBar(st: st),
@@ -331,7 +335,8 @@ class _TopBar extends StatelessWidget {
         _Steps(current: switch (st.stage) {
           Stage.start || Stage.ready || Stage.analyzing => 1,
           Stage.editing => 2,
-          Stage.exporting || Stage.done => 3,
+          Stage.exporting => 3,
+          Stage.done => 4, // every step done
         }),
         const SizedBox(width: Sp.m),
         // a long adapter name shrinks (ellipsis, full text in the tooltip) instead of pushing the bar off screen

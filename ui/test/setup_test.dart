@@ -79,6 +79,57 @@ void main() {
       expect(r.device.speedUp, closeTo(12, 0.01));
       expect(fmtTimes(r.device.speedUp!), '12');
       expect(c.rows.every((x) => x.done), isTrue);
+      expect(c.advice, isNull); // the best path works: nothing to suggest
+    });
+
+    test('old NVIDIA driver: the CUDA row says so and the advice opens the NVIDIA driver page', () async {
+      Future<Map<String, dynamic>> run(EngineCommand cmd, List<String> args, EventCallback on, Duration t) async {
+        for (final e in _sysEvents(['NVIDIA GeForce Test GPU'])) {
+          on(e..putIfAbsent('nvidia_driver', () => e['item'] == 'gpus' ? '471.41' : null));
+        }
+        on(_ev('cuda', 'checking'));
+        if (cmd.label == 'packaged-cuda') {
+          on(_ev('cuda', 'failed', {'reason': 'old_driver', 'driver': '471.41', 'min_driver': '527.41'}));
+          return _result('cpu');
+        }
+        on(_ev('dml', 'checking'));
+        on(_ev('dml', 'ok', {'device': 'NVIDIA GeForce Test GPU'}));
+        return _result('dml', device: 'NVIDIA GeForce Test GPU', ok: ['dml']);
+      }
+
+      final c = SystemCheck(runner: run);
+      final r = await c.run([_cuda, _main]);
+      expect(r.device.chosen, 'dml');
+      expect(c.row('cuda').state, CheckState.failed);
+      expect(c.row('cuda').detail, S.cudaOldDriver('471.41', '527.41'));
+      expect(c.nvidiaDriver, '471.41');
+      expect(c.advice?.kind, AdviceKind.nvidiaDriver);
+      expect(c.advice?.url, nvidiaDriverUrl);
+      expect(c.advice?.text, contains('471.41'));
+    });
+
+    test('NVIDIA card but no NVIDIA engine in this install: the advice points to the full download', () async {
+      Future<Map<String, dynamic>> run(EngineCommand cmd, List<String> args, EventCallback on, Duration t) async {
+        for (final e in _sysEvents(['NVIDIA GeForce Test GPU'])) {
+          on(e);
+        }
+        on(_ev('cuda', 'checking'));
+        on(_ev('cuda', 'skipped', {'reason': 'not_installed', 'nvidia_present': true}));
+        on(_ev('dml', 'checking'));
+        on(_ev('dml', 'ok', {'device': 'NVIDIA GeForce Test GPU'}));
+        return _result('dml', device: 'NVIDIA GeForce Test GPU', ok: ['dml']);
+      }
+
+      final c = SystemCheck(runner: run);
+      await c.run([_main]);
+      expect(c.advice?.kind, AdviceKind.nvidiaPack);
+      expect(c.advice?.url, releasesUrl);
+    });
+
+    test('driver page by card maker', () {
+      expect(driverUrlFor('NVIDIA GeForce RTX 4060'), nvidiaDriverUrl);
+      expect(driverUrlFor('AMD Radeon RX 6600'), amdDriverUrl);
+      expect(driverUrlFor('Intel(R) UHD Graphics 630'), intelDriverUrl);
     });
 
     test('NVIDIA with the CUDA build: CUDA, main build asked without a second test run', () async {

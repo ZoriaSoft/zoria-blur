@@ -137,7 +137,9 @@ class S {
 
   // preview
   static const preview = 'Önizleme';
-  static const previewExact = 'Bu kare, kaydedilecek videonun aynısı';
+  static const previewExact = 'Kayıttaki hali';
+  static const previewExactTip = 'Bu kare, kaydedilecek videoda nasıl görünecekse öyle gösteriliyor.';
+  static const previewLiveTip = 'Oynatırken bulanıklık yaklaşık çizilir; durdurunca kaydedilecek hali gelir.';
   static const previewLive = 'Canlı önizleme';
   static const timeline = 'Zaman çizelgesi';
   static const prevFrame = 'Önceki kare';
@@ -184,15 +186,27 @@ class S {
   static String step(int a, int b) => 'Adım $a/$b';
   static const done = 'Video hazır';
   static const openFolder = 'Klasörde göster';
-  static const openVideo = 'Videoyu izle';
   static const backToEdit = 'Düzenlemeye dön';
+  static const doneTitle = 'Sonuç';
+  static const resultTab = 'Bulanık hali';
+  static const originalTab = 'Orijinal';
+  static const originalBadge = 'Orijinal video';
+  static const newVideo = 'Yeni video';
+  static const openExternal = 'Başka oynatıcıda aç';
+  static const resultCantPlay = 'Bu video burada oynatılamadı. Bilgisayarınızdaki oynatıcıyla açabilirsiniz.';
+  static const finalCheck = 'Son kontrol';
+  static const leakWatchHint = 'Bu anları buradan izleyin; gerekirse düzenlemeye dönüp düzeltin.';
+  static const fixInEditor = 'Düzenlemeye dön ve düzelt';
+  static const playTip = 'Oynat';
+  static const pauseTip = 'Duraklat';
+  static const mute = 'Sesi kapat';
+  static const unmute = 'Sesi aç';
   static const qaClean = 'Kontrol temiz: açık kalan yüz bulunamadı.';
   static String qaRiskOnly(int n) =>
       'Açık yüz bulunamadı. Yine de $n riskli an var, bakmanız iyi olur.';
   static String qaLeaks(int n) =>
       'Riskli $n an var, kontrol edin: bu anlarda bir yüz net kalmış olabilir.';
   static const qaSkipped = 'Son kontrol yapılamadı.';
-  static const seeMoments = 'Kırmızı işaretli anlara önizlemeden bakabilirsiniz.';
   static const saveTitle = 'Bulanık videoyu kaydet';
   static const outSuffix = '_bulanik';
 
@@ -249,6 +263,21 @@ class S {
   static const cudaNotShipped = 'NVIDIA kartı var, ancak bu kurulumda NVIDIA desteği yok';
   static const cudaDisabled = 'Kapatılmış';
   static const cudaFailed = 'NVIDIA kartı var, ancak denemede çalışmadı';
+  static String cudaOldDriver(String have, String need) => 'Sürücü eski ($have). En az $need gerekiyor';
+  static String adviceOldNvidia(String have) =>
+      'NVIDIA kartınızın sürücüsü eski ($have). Güncellerseniz program kartınızı tam hızda kullanır; '
+      'güncelledikten sonra Yardım menüsünden kontrolü tekrar çalıştırın.';
+  static const adviceCudaFailed =
+      'NVIDIA kartınız denemede çalışmadı. Çoğu zaman sürücüyü güncellemek bunu çözer; '
+      'güncelledikten sonra kontrolü tekrar çalıştırın.';
+  static const adviceNvidiaPack =
+      'NVIDIA kartınız var ama bu kurulumda NVIDIA hız paketi yok. Tam kurulumu indirirseniz kartınız tam hızda kullanılır.';
+  static const adviceDmlFailed =
+      'Ekran kartınız denemede çalışmadı, işlem işlemciyle yapılacak. Sürücüyü güncellemek çoğu zaman bunu çözer.';
+  static const adviceDriverButton = 'Sürücü sayfasını aç';
+  static const adviceNvidiaPackButton = 'Tam kurulumu indir';
+  static const adviceRecheck = 'Tekrar kontrol et';
+  static const adviceTitle = 'Daha hızlı çalışması için';
   static const dmlNotNeeded = 'Gerek kalmadı: NVIDIA CUDA çalışıyor';
   static const dmlNotInstalled = 'Bu kurulumda DirectML yok';
   static const dmlSoftwareOnly = 'Yalnızca Windows’un yazılım ekran sürücüsü var';

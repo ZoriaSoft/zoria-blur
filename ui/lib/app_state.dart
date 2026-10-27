@@ -100,6 +100,19 @@ class AppState extends ChangeNotifier {
 
   // export result
   String? outputPath;
+
+  /// The result player (widgets/result_view.dart) while it is on screen: Space, the arrow keys and the leak buttons
+  /// drive it through these.
+  VoidCallback? resultTogglePlay;
+
+  /// The result player's state for the self-test: null while it opens, 'ready' or 'error'.
+  String? resultPlayerState;
+
+  /// Self-test window capture in progress: the result player draws a stand-in instead of its video texture.
+  bool resultSnapshot = false;
+  Duration resultPlayerPosition = Duration.zero;
+  void Function(Duration by)? resultSeekBy;
+  void Function(double seconds)? resultSeekTo;
   Map<String, dynamic>? qa;
   List<Risk> leaks = [];
 
@@ -793,14 +806,22 @@ class AppState extends ChangeNotifier {
     if (commit) requestPreview();
   }
 
-  /// Arrow keys / step buttons: one frame back or forward (pauses playback).
+  /// Arrow keys / step buttons: one frame back or forward (pauses playback). On the result: 5 s back or forward.
   void stepFrame(int delta) {
+    if (stage == Stage.done) {
+      resultSeekBy?.call(Duration(seconds: 5 * delta.sign));
+      return;
+    }
     if (video == null || stage != Stage.editing) return;
     final from = player.playing ? player.frame : frame;
     setFrame(from + delta, commit: true);
   }
 
   void togglePlay() {
+    if (stage == Stage.done) {
+      resultTogglePlay?.call();
+      return;
+    }
     if (stage != Stage.editing) return;
     player.playing ? pause() : play();
   }
@@ -1020,6 +1041,11 @@ class AppState extends ChangeNotifier {
     if (o == null) return;
     await Process.run('explorer.exe', ['/select,', o]);
   }
+
+  /// Opens an official web page (driver download, releases) in the default browser; tests replace it.
+  Future<void> Function(String url) openUrl = (url) async {
+    await Process.run('rundll32', ['url.dll,FileProtocolHandler', url]);
+  };
 
   Future<void> openOutput() async {
     final o = outputPath;

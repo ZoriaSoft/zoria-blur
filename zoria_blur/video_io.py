@@ -176,11 +176,71 @@ def stream_rgba(video: Path, ffmpeg: str, start_frame: int, width: int, height: 
 _MP4_AUDIO_OK = {"aac", "mp3", "ac3", "eac3", "alac", "opus", "flac"}
 
 
+# H.264 encoders, fastest first per card maker. The graphics card's own encoder takes the encoding off the processor
+# (measured on a laptop with an entry-level NVIDIA card, 1080p: x264 veryfast 107 fps, NVENC 239 fps, Quick Sync 163 fps), so the processor
+# stays free for the blur. Every one is checked with a tiny test encode before use; x264 is the fallback, and a
+# hardware encode that fails during an export is redone with x264 (renderer.render).
+ENCODERS = ("nvenc", "qsv", "amf", "x264")
+_ENC_CACHE: dict = {}
+
+
+def _encoder_args(enc: str, crf: int, preset: str) -> list[str]:
+    if enc == "nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", str(crf + 1), "-b:v", "0",
+                "-spatial-aq", "1", "-profile:v", "high", "-pix_fmt", "yuv420p"]
+    if enc == "qsv":
+        return ["-c:v", "h264_qsv", "-global_quality", str(crf + 2), "-preset", "medium", "-pix_fmt", "nv12"]
+    if enc == "amf":
+        return ["-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", str(crf), "-qp_p", str(crf + 2),
+                "-qp_b", str(crf + 4), "-pix_fmt", "nv12"]
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-pix_fmt", "yuv420p"]
+
+
+def encoder_works(ffmpeg: str, enc: str) -> bool:
+    """A 16-frame test encode with this encoder (cached per process). x264 always counts as working."""
+    if enc == "x264":
+        return True
+    key = (ffmpeg, enc)
+    if key not in _ENC_CACHE:
+        cmd = [ffmpeg, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30",
+               "-frames:v", "16", *_encoder_args(enc, 18, "veryfast"), "-f", "null", "-"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=20, stdin=subprocess.DEVNULL, **_NOWIN)
+            _ENC_CACHE[key] = r.returncode == 0
+        except Exception:  # noqa: BLE001
+            _ENC_CACHE[key] = False
+    return _ENC_CACHE[key]
+
+
+def pick_encoder(ffmpeg: str, gpu_names: list[str] | None = None) -> str:
+    """ZORIA_ENCODER=x264|nvenc|qsv|amf forces one (a forced one that fails still falls back to x264); otherwise the
+    card's own encoder that passes the test encode, by the makers of the cards in this PC, else x264."""
+    want = os.environ.get("ZORIA_ENCODER", "auto").strip().lower()
+    if want in ("cpu", "x264"):
+        return "x264"
+    if want in ENCODERS:
+        return want if encoder_works(ffmpeg, want) else "x264"
+    if gpu_names is None:
+        try:
+            from .dxgi import adapters
+            gpu_names = [a["name"] for a in adapters() if not a.get("software") and a.get("name")]
+        except Exception:  # noqa: BLE001
+            gpu_names = []
+    low = " ".join(gpu_names).lower()
+    order = [e for e, hit in (("nvenc", "nvidia" in low), ("qsv", "intel" in low),
+                              ("amf", "amd" in low or "radeon" in low)) if hit]
+    for enc in order:
+        if encoder_works(ffmpeg, enc):
+            return enc
+    return "x264"
+
+
 class FrameWriter:
-    """Encodes BGR frames with libx264 and muxes the ORIGINAL audio from the source file."""
+    """Encodes BGR frames (x264, or the graphics card's encoder) and muxes the ORIGINAL audio from the source file."""
 
     def __init__(self, info: VideoInfo, out_path: Path, ffmpeg: str, crf: int = 18,
-                 preset: str = "veryfast", log_path: Path | None = None):
+                 preset: str = "veryfast", log_path: Path | None = None, encoder: str = "x264"):
+        self.encoder = encoder
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         ext = out_path.suffix.lower()
@@ -196,7 +256,7 @@ class FrameWriter:
                "-r", info.fps, "-i", "-",
                "-i", info.path,
                "-map", "0:v:0", "-map", "1:a?",
-               "-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-pix_fmt", "yuv420p",
+               *_encoder_args(encoder, crf, preset),
                *a_args]
         if ext in (".mp4", ".m4v", ".mov"):
             cmd += ["-movflags", "+faststart"]

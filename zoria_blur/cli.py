@@ -165,6 +165,8 @@ def main(argv=None):
     r.add_argument("--crf", type=int, default=18)
     r.add_argument("--preset", default="veryfast")
     r.add_argument("--no-qa", action="store_true", help="skip the automatic QA pass after rendering")
+    r.add_argument("--encoder", default="auto", choices=["auto", "x264", "nvenc", "qsv", "amf"],
+                   help="H.264 encoder: auto = the graphics card's own encoder when it passes a test encode, else x264")
     r.add_argument("--qa-every", type=int, default=3, help="QA: check every Nth frame")
     _render_opts(r)
 
@@ -287,7 +289,8 @@ def main(argv=None):
                 res = render(args.video, proj, out, ff, mode=args.mode, persons=args.persons, style=args.style,
                              strength=args.strength, padding=args.padding, crf=args.crf, preset=args.preset,
                              progress=prog, qa=not args.no_qa, qa_every=args.qa_every, backend=args.backend,
-                             threads=args.threads, models_dir=args.models, **kw)
+                             threads=args.threads, models_dir=args.models,
+                             encoder=None if args.encoder == "auto" else args.encoder, **kw)
                 _emit({"ok": True, **res, "device": used_summary()})
             else:
                 import cv2, numpy as np

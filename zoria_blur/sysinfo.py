@@ -98,6 +98,67 @@ def hardware_adapters(gpus_fallback: list[str] | None = None) -> list[str]:
     return sorted(set(gpus_fallback or []))
 
 
+# Oldest NVIDIA driver the shipped CUDA 12 runtime runs on (CUDA 12.0 GA, Windows; minor version compatibility).
+MIN_NVIDIA_DRIVER = (527, 41)
+
+
+def nvidia_driver_version(windows_version: str) -> str | None:
+    """NVIDIA's own driver number from the Windows driver version: '32.0.15.6094' -> '560.94' (the last five digits
+    of the third and fourth parts). None if it does not look like one."""
+    parts = windows_version.strip().split(".")
+    if len(parts) != 4 or not all(p.isdigit() for p in parts):
+        return None
+    digits = (parts[2] + parts[3].zfill(4))[-5:]
+    if len(digits) < 5:
+        return None
+    return f"{int(digits[:3])}.{digits[3:]}"
+
+
+def nvidia_driver() -> str | None:
+    """Installed NVIDIA display driver as NVIDIA numbers it ('560.94'), from the display adapter class in the registry
+    (no admin, no subprocess). None when there is no NVIDIA driver or it can't be read."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+        best = None
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as cls:
+            for i in range(64):
+                try:
+                    sub = winreg.EnumKey(cls, i)
+                except OSError:
+                    break
+                if not sub.isdigit():
+                    continue
+                try:
+                    with winreg.OpenKey(cls, sub) as k:
+                        prov = str(winreg.QueryValueEx(k, "ProviderName")[0])
+                        ver = str(winreg.QueryValueEx(k, "DriverVersion")[0])
+                except OSError:
+                    continue
+                if "nvidia" not in prov.lower():
+                    continue
+                v = nvidia_driver_version(ver)
+                if v and (best is None or driver_tuple(v) > driver_tuple(best)):
+                    best = v
+        return best
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def driver_tuple(v: str) -> tuple[int, int]:
+    a, _, b = v.partition(".")
+    try:
+        return int(a), int(b or 0)
+    except ValueError:
+        return 0, 0
+
+
+def nvidia_driver_too_old(v: str | None) -> bool:
+    return v is not None and driver_tuple(v) < MIN_NVIDIA_DRIVER
+
+
 def fingerprint(cpu: dict, adapters: list[str]) -> str:
     """Changes when the processor or a display adapter changes (not with drivers or settings)."""
     return "|".join([cpu.get("name") or "?", *adapters])

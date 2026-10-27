@@ -94,6 +94,8 @@ class EditorCenter extends StatelessWidget {
                 Flexible(
                   child: Align(
                   alignment: Alignment.centerLeft,
+                  child: Tooltip(
+                  message: playing ? S.previewLiveTip : S.previewExactTip,
                   child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
@@ -105,6 +107,7 @@ class EditorCenter extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 11.5, color: playing ? c.accentText : c.muted)),
+                  ),
                   ),
                   ),
                 ),

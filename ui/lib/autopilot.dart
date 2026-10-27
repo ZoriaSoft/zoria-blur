@@ -56,12 +56,22 @@ class Autopilot {
   }
 
   Future<void> shot(String name) async {
+    // a platform texture (the result player's video) cannot be read back by toImage: the engine crashed on it
+    // (0xc0000005 in flutter_windows.dll), so the player shows a stand-in frame while the window is captured
+    st.resultSnapshot = true;
+    st.notifyListeners();
     await WidgetsBinding.instance.endOfFrame;
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await WidgetsBinding.instance.endOfFrame;
     final boundary = shotKey.currentContext?.findRenderObject();
-    if (boundary is! RenderRepaintBoundary) return;
+    if (boundary is! RenderRepaintBoundary) {
+      st.resultSnapshot = false;
+      st.notifyListeners();
+      return;
+    }
     final img = await boundary.toImage(pixelRatio: 1.0);
+    st.resultSnapshot = false;
+    st.notifyListeners();
     final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
     if (bytes == null) return;
     File(p.join(out, '$name.png')).writeAsBytesSync(bytes.buffer.asUint8List());
@@ -217,6 +227,19 @@ class Autopilot {
         'leak_moments': st.leakMoments.length,
       });
       await shot('08_done');
+      // the result plays in the app: wait for the player, play 2 s, and log how far it got
+      await _until(() => st.resultPlayerState != null, const Duration(seconds: 30));
+      final ready = st.resultPlayerState == 'ready';
+      if (ready) {
+        st.resultTogglePlay?.call();
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await shot('08b_result_playing');
+        st.resultTogglePlay?.call();
+      }
+      _step('result_player', {'state': st.resultPlayerState, 'position_ms': st.resultPlayerPosition.inMilliseconds});
+      if (!ready || st.resultPlayerPosition < const Duration(milliseconds: 500)) {
+        throw 'result player did not play: ${st.resultPlayerState} ${st.resultPlayerPosition}';
+      }
       // zero leaks first: a self-test whose export still shows a sharp face fails
       if (st.leakMoments.isNotEmpty) throw 'export QA found ${st.leakMoments.length} leak moment(s)';
       // back to an empty window: the welcome page now lists this video under "Son projeler"

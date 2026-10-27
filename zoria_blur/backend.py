@@ -416,7 +416,8 @@ def probe_devices(models_dir: Path | None = None, threads: int = 0, only: str | 
     progress(ev) gets {"event": "probe", "item": cpu|memory|gpus|cuda|dml|cpu_backend|test, "status": ...} as each
     step starts and ends, so the app's system check can show it live. `reason` codes: not_installed, disabled,
     no_nvidia, software_only, no_model, not_requested, error, test_failed."""
-    from .sysinfo import cpu_info, fingerprint, hardware_adapters, memory_gb
+    from .sysinfo import (MIN_NVIDIA_DRIVER, cpu_info, fingerprint, hardware_adapters, memory_gb, nvidia_driver,
+                          nvidia_driver_too_old)
 
     def ev(item, status, **kw):
         if progress:
@@ -442,12 +443,14 @@ def probe_devices(models_dir: Path | None = None, threads: int = 0, only: str | 
     if not gpus:
         gpus = list(hw)
     nvidia = [g for g in real_gpus if "nvidia" in g.lower()]
+    nv_driver = nvidia_driver() if nvidia else None
+    min_driver = "%d.%02d" % MIN_NVIDIA_DRIVER
     try:
         from .dxgi import adapters as _dx
         dxgi_all = _dx()          # [] off Windows / on error: then DirectML is simply tried
     except Exception:  # noqa: BLE001
         dxgi_all = []
-    ev("gpus", "found" if real_gpus else "missing", names=real_gpus, all=gpus)
+    ev("gpus", "found" if real_gpus else "missing", names=real_gpus, all=gpus, nvidia_driver=nv_driver)
 
     def _name_for(b):
         if b == "cuda":
@@ -477,6 +480,11 @@ def probe_devices(models_dir: Path | None = None, threads: int = 0, only: str | 
             p["error"], p["reason"] = "no NVIDIA adapter", "no_nvidia"   # skip loading ~2 GB of CUDA DLLs for nothing
             ev(item, "skipped", reason="no_nvidia")
             continue
+        if b == "cuda" and nvidia_driver_too_old(nv_driver):
+            # the CUDA 12 runtime can't start on it: say so (the app offers the driver page) instead of a vague failure
+            p["error"], p["reason"] = f"NVIDIA driver {nv_driver} is older than {min_driver}", "old_driver"
+            ev(item, "failed", reason="old_driver", driver=nv_driver, min_driver=min_driver)
+            continue
         if b == "dml" and ((gpus and not real_gpus) or (dxgi_all and not hw)):
             p["error"], p["reason"] = "only a software display adapter", "software_only"
             ev(item, "skipped", reason="software_only")
@@ -492,7 +500,7 @@ def probe_devices(models_dir: Path | None = None, threads: int = 0, only: str | 
             ev(item, "ok", ms=p["ms"], device=_name_for(b))
         except Exception as e:  # noqa: BLE001
             p["error"], p["reason"] = _err_text(e), "error"
-            ev(item, "failed", reason="error", error=p["error"])
+            ev(item, "failed", reason="error", error=p["error"], driver=nv_driver if b == "cuda" else None)
 
     bench = None
     if test and bench_model is not None:
@@ -530,6 +538,7 @@ def probe_devices(models_dir: Path | None = None, threads: int = 0, only: str | 
     elif chosen == "dml":
         device = (dml or {}).get("name") or (real_gpus[0] if real_gpus else None)
     return {"chosen": chosen, "device_name": device, "gpus": gpus, "nvidia_present": bool(nvidia),
+            "nvidia_driver": nv_driver, "min_nvidia_driver": min_driver,
             "dml_adapter": ({"index": dml["index"], "name": dml.get("name"), "how": dml.get("how")} if dml else None),
             "dml_adapters": [{k: a[k] for k in ("index", "name", "dedicated_mb", "software")} for a in adapters()],
             "onnxruntime": ort.__version__, "probes": probes, "bench": bench, "quick": bool(only),

@@ -9,7 +9,7 @@ import numpy as np
 from .numeric import gaussian_filter1d_nearest
 
 from .project import Project
-from .video_io import FrameReader, FrameWriter, probe
+from .video_io import FrameReader, FrameWriter, pick_encoder, probe
 
 
 # ---------------------------------------------------------------- box sequences
@@ -88,6 +88,14 @@ def dense_sequence(frames, boxes, fps, n_frames, *, max_gap_s=1.0, smooth_s=0.12
 
 
 # ---------------------------------------------------------------- blur kernels
+def _shrink(img, sw, sh):
+    """Area-average down to (sw, sh). Big factors halve with pyrDown first (8x faster than one INTER_AREA step on a
+    large head; at most 2 grey levels apart), then the last step is INTER_AREA."""
+    while img.shape[1] // 2 >= sw * 2 and img.shape[0] // 2 >= sh * 2:
+        img = cv2.pyrDown(img)
+    return cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
+
+
 def _blur_roi(roi, face_w, style, strength):
     h, w = roi.shape[:2]
     strength = max(0.1, float(strength))
@@ -95,14 +103,14 @@ def _blur_roi(roi, face_w, style, strength):
         blocks = max(3.0, 9.0 / strength)                # blocks across the face width
         sc = blocks / max(face_w, 1.0)
         sw, sh = max(1, int(round(w * sc))), max(1, int(round(h * sc)))
-        small = cv2.resize(roi, (sw, sh), interpolation=cv2.INTER_AREA)
+        small = _shrink(roi, sw, sh)
         return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
     # gaussian: downscale -> blur -> 4x up -> blur -> full size. Strong, cheap, no blockiness:
     # all real filtering happens on small images, the full-res step is a bilinear resize.
     target = max(4.0, 11.0 / strength)                   # px across face in the small image
     sc = min(1.0, target / max(face_w, 1.0))
     sw, sh = max(1, int(round(w * sc))), max(1, int(round(h * sc)))
-    small = cv2.resize(roi, (sw, sh), interpolation=cv2.INTER_AREA)
+    small = _shrink(roi, sw, sh)
     small = cv2.GaussianBlur(small, (0, 0), 1.2)
     if sc < 0.25:
         mid = cv2.resize(small, (sw * 4, sh * 4), interpolation=cv2.INTER_LINEAR)
@@ -110,6 +118,29 @@ def _blur_roi(roi, face_w, style, strength):
         return cv2.resize(mid, (w, h), interpolation=cv2.INTER_LINEAR)
     up = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
     return cv2.GaussianBlur(up, (0, 0), max(1.0, 0.6 / max(sc, 1e-3)))
+
+
+def _soft_ellipse(shape, center, axes, sigma):
+    """Filled anti-aliased ellipse blurred with `sigma` (the feathered blur mask). A big face has a big feather: a
+    full-size Gaussian with sigma 40-120 px cost 15-90 ms per face (2.9 fps on a 2560x1080 clip with ~19 regions),
+    so a wide sigma is computed on a grid `ds` times coarser (sigma there >= 4 px) and resized back. Measured against
+    the full-size mask: wherever the full-size alpha is above 0.5 the coarse one is never lower (it only grows the
+    feather by up to ~0.06 at its outer edge), so it never blurs less of a face. 85 ms -> 0.7 ms for a 500 px face."""
+    h, w = shape
+    ds = int(sigma // 4.0)
+    if ds <= 1:
+        m = np.zeros(shape, np.float32)
+        cv2.ellipse(m, (int(round(center[0])), int(round(center[1]))), (int(round(axes[0])), int(round(axes[1]))),
+                    0, 0, 360, 1.0, -1, cv2.LINE_AA)
+        return cv2.GaussianBlur(m, (0, 0), sigma)
+    sh, sw = -(-h // ds), -(-w // ds)
+    m = np.zeros((sh, sw), np.float32)
+    s = 16                                          # 4 fractional bits: sub-pixel centre / axes on the coarse grid
+    cx, cy = (center[0] + 0.5) / ds - 0.5, (center[1] + 0.5) / ds - 0.5
+    cv2.ellipse(m, (int(round(cx * s)), int(round(cy * s))), (int(round(axes[0] / ds * s)), int(round(axes[1] / ds * s))),
+                0, 0, 360, 1.0, -1, cv2.LINE_AA, 4)
+    m = cv2.GaussianBlur(m, (0, 0), sigma / ds)
+    return cv2.resize(m, (sw * ds, sh * ds), interpolation=cv2.INTER_LINEAR)[:h, :w]
 
 
 def apply_regions(frame, regions, style="gaussian", strength=1.0, padding=0.3, feather=0.25, keep=None):
@@ -139,11 +170,9 @@ def apply_regions(frame, regions, style="gaussian", strength=1.0, padding=0.3, f
         if x2 - x1 < 2 or y2 - y1 < 2:
             continue
         roi = frame[y1:y2, x1:x2]
-        mask = np.zeros(roi.shape[:2], np.float32)
         # solid core grown by half the feather so alpha is ~1 over the whole padded face
-        cv2.ellipse(mask, (int(round(cx - x1)), int(round(cy2 - y1))),
-                    (int(round(ax + f * 0.5)), int(round(ay + f * 0.5))), 0, 0, 360, 1.0, -1, cv2.LINE_AA)
-        mask = cv2.GaussianBlur(mask, (0, 0), max(0.8, f / 2.0))
+        mask = _soft_ellipse(roi.shape[:2], (round(cx - x1), round(cy2 - y1)),
+                             (round(ax + f * 0.5), round(ay + f * 0.5)), max(0.8, f / 2.0))
         if kl and carve:
             km = np.zeros_like(mask)
             for kb in kl:
@@ -162,8 +191,9 @@ def apply_regions(frame, regions, style="gaussian", strength=1.0, padding=0.3, f
                                 (int(round(0.5 * w)), int(round(0.5 * h))), 0, 0, 360, 1.0, -1, cv2.LINE_AA)
                 mask = mask * (1.0 - km * (1.0 - own))
         blurred = _blur_roi(roi, w, style, strength)
-        a = mask[..., None]
-        frame[y1:y2, x1:x2] = (roi.astype(np.float32) * (1 - a) + blurred.astype(np.float32) * a + 0.5).astype(np.uint8)
+        # roi * (1 - mask) + blurred * mask in one native pass (8x faster than the float32 numpy expression; the
+        # same result within 1 grey level of rounding)
+        frame[y1:y2, x1:x2] = cv2.blendLinear(roi, blurred, 1.0 - mask, mask)
     return frame
 
 
@@ -633,7 +663,8 @@ def _covers_other(r, others, dist_frac=0.5):
 
 def render(video: Path, proj: Project, out_path: Path, ffmpeg: str, *, mode: str, persons: list[int],
            style="gaussian", strength=1.0, padding=0.3, crf=18, preset="veryfast", progress=None,
-           qa=True, qa_every=3, backend="cpu", threads=0, models_dir=None, **plan_kw) -> dict:
+           qa=True, qa_every=3, backend="cpu", threads=0, models_dir=None, encoder: str | None = None,
+           **plan_kw) -> dict:
     t0 = time.perf_counter()
     info = probe(Path(video), ffmpeg)
     pv = proj.data["video"]
@@ -641,32 +672,52 @@ def render(video: Path, proj: Project, out_path: Path, ffmpeg: str, *, mode: str
         raise ValueError("video does not match the analyzed project (size/fps differ)")
     per_frame, report = plan_regions(proj, mode, persons, **plan_kw)
     protect = report.pop("_protect", {})
-    writer = FrameWriter(info, out_path, ffmpeg, crf=crf, preset=preset,
-                         log_path=Path(out_path).with_suffix(".ffmpeg.log"))
-    n = 0
     total = pv["frame_count"]
-    t_blur = 0.0
-    try:
-        for idx, frame in enumerate(FrameReader(info, ffmpeg)):
-            regs = per_frame.get(idx)
-            if regs:
-                ta = time.perf_counter()
-                frame = apply_regions(frame.copy(), regs, style, strength, padding, keep=protect.get(idx))
-                t_blur += time.perf_counter() - ta
-            writer.write(frame)
-            n += 1
-            if progress and idx % 15 == 0:
-                progress({"event": "progress", "phase": "render", "frame": idx, "total": total})
-    finally:
-        rc = writer.close()
-    if rc != 0:
-        raise RuntimeError(f"ffmpeg encode failed (exit {rc}); see {Path(out_path).with_suffix('.ffmpeg.log')}")
     log = Path(out_path).with_suffix(".ffmpeg.log")
+    enc = encoder or pick_encoder(ffmpeg)
+    fallback = None
+
+    def encode_all(enc_name: str):
+        writer = FrameWriter(info, out_path, ffmpeg, crf=crf, preset=preset, log_path=log, encoder=enc_name)
+        n, t_blur = 0, 0.0
+        broken = False
+        try:
+            for idx, frame in enumerate(FrameReader(info, ffmpeg)):
+                regs = per_frame.get(idx)
+                if regs:
+                    ta = time.perf_counter()
+                    frame = apply_regions(frame.copy(), regs, style, strength, padding, keep=protect.get(idx))
+                    t_blur += time.perf_counter() - ta
+                try:
+                    writer.write(frame)
+                except (BrokenPipeError, OSError):
+                    broken = True          # the encoder quit: its exit code below says why
+                    break
+                n += 1
+                if progress and idx % 15 == 0:
+                    progress({"event": "progress", "phase": "render", "frame": idx, "total": total})
+        finally:
+            rc = writer.close()
+        return (rc if rc != 0 or not broken else 1), n, t_blur
+
+    rc, n, t_blur = encode_all(enc)
+    if rc != 0 and enc != "x264":
+        # the graphics card's encoder failed on the real video (driver, size limit): redo the whole file with x264,
+        # never ship a half-written file
+        fallback = {"from": enc, "exit": rc}
+        enc = "x264"
+        if progress:
+            progress({"event": "progress", "phase": "render", "frame": 0, "total": total})
+        rc, n, t_blur = encode_all(enc)
+    if rc != 0:
+        raise RuntimeError(f"ffmpeg encode failed (exit {rc}); see {log}")
     if log.is_file() and log.stat().st_size == 0:
         log.unlink()
     el = time.perf_counter() - t0
     res = {"output": str(out_path), "frames": n, "seconds": round(el, 2), "fps": round(n / el, 2) if el else None,
-           "seconds_blur": round(t_blur, 2), "mode": mode, "persons": persons, **report}
+           "seconds_blur": round(t_blur, 2), "encoder": enc, "mode": mode, "persons": persons, **report}
+    if fallback:
+        res["encoder_fallback"] = fallback
     proj.data["last_render"] = {"output": str(out_path), "mode": mode, "persons": list(persons),
                                 "plan_kw": dict(plan_kw)}
     proj.save()

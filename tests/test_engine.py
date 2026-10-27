@@ -14,6 +14,28 @@ def unit(v):
     return (v / np.linalg.norm(v)).astype(np.float32)
 
 
+def test_nvidia_driver_number():
+    from zoria_blur.sysinfo import nvidia_driver_too_old, nvidia_driver_version
+    assert nvidia_driver_version("32.0.15.6094") == "560.94"
+    assert nvidia_driver_version("31.0.15.2741") == "527.41"
+    assert nvidia_driver_version("30.0.14.7141") == "471.41"
+    assert nvidia_driver_version("32.0.16.1656") == "616.56"
+    assert nvidia_driver_version("10.18.13.6200") == "362.00"
+    assert nvidia_driver_version("garbage") is None
+    assert nvidia_driver_too_old("471.41") and not nvidia_driver_too_old("527.41")
+    assert not nvidia_driver_too_old("616.56") and not nvidia_driver_too_old(None)
+
+
+def test_thumb_crop_small_face():
+    """A 14 px far face still gives a readable 160 px card crop (enlarged, not empty)."""
+    from zoria_blur.analyze import _crop_for_thumb
+    img = np.zeros((720, 1280, 3), np.uint8)
+    img[300:314, 600:614] = 200
+    c = _crop_for_thumb(img, [600, 300, 614, 314])
+    assert c is not None and max(c.shape[:2]) == 160, None if c is None else c.shape
+    assert c.max() > 150, "face pixels lost"
+
+
 def test_dense_sequence():
     frames = [0, 2, 4, 20, 22]           # gap 4->20 (16 frames) should be interpolated at 30 fps
     boxes = [[100 + f, 100, 150 + f, 160] for f in frames]

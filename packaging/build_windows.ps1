@@ -64,15 +64,30 @@ Copy-Item "$root\bin\FFMPEG_LICENSE.txt" $dist -ErrorAction SilentlyContinue
 "{0:N0} MB  {1}" -f ((Get-ChildItem -Recurse $dist | Measure-Object Length -Sum).Sum / 1MB), "$dist\ZoriaBlur.exe"
 
 if (-not $SkipInstaller) {
-  # one-file installer: dist\ZoriaBlur-Setup-<version>.exe (version = ui\pubspec.yaml, e.g. 0.1.0+1 -> 0.1.0)
+  # two one-file installers (version = ui\pubspec.yaml, e.g. 0.1.0+1 -> 0.1.0):
+  #   dist\ZoriaBlur-Setup-<version>.exe         light: DirectML (any card) + CPU, ~1/7 of the size
+  #   dist\ZoriaBlur-Setup-<version>-NVIDIA.exe  also the CUDA engine (only when this build has one)
+  # The app tells an NVIDIA user with the light one where the NVIDIA one is (system check advice).
   if (-not (Test-Path "$dist\ZoriaBlur.exe")) { throw "no $dist\ZoriaBlur.exe - build the app first" }
   $iscc = @($env:ISCC, "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") |
           Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
   if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) not found; set `$env:ISCC" }
   $ver = ((Select-String -Path "$root\ui\pubspec.yaml" -Pattern '^version:\s*(\S+)').Matches[0].Groups[1].Value)
-  & $iscc /Q "/DAppVersion=$ver" "/DSourceDir=$dist" "$root\packaging\installer.iss"
-  if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
-  $setup = Get-ChildItem "$root\dist\ZoriaBlur-Setup-*.exe" | Sort-Object LastWriteTime | Select-Object -Last 1
-  "{0:N0} MB  {1}" -f ($setup.Length / 1MB), $setup.FullName
+  $short = $ver.Split('+')[0]
+  if (Test-Path "$dist\engine-cuda\zoria-blur-engine.exe") {
+    & $iscc /Q "/DAppVersion=$ver" "/DSourceDir=$dist" "/DFlavor=-NVIDIA" "$root\packaging\installer.iss"
+    if ($LASTEXITCODE -ne 0) { throw "ISCC (NVIDIA) failed ($LASTEXITCODE)" }
+  }
+  # light: the same files without engine-cuda (moved aside for the compile, always moved back)
+  $aside = "$root\build\engine-cuda-aside"
+  Remove-Item -Recurse -Force $aside -ErrorAction SilentlyContinue
+  if (Test-Path "$dist\engine-cuda") { Move-Item "$dist\engine-cuda" $aside }
+  try {
+    & $iscc /Q "/DAppVersion=$ver" "/DSourceDir=$dist" "$root\packaging\installer.iss"
+    if ($LASTEXITCODE -ne 0) { throw "ISCC (light) failed ($LASTEXITCODE)" }
+  } finally {
+    if (Test-Path $aside) { Move-Item $aside "$dist\engine-cuda" }
+  }
+  Get-ChildItem "$root\dist\ZoriaBlur-Setup-$short*.exe" | ForEach-Object { "{0:N0} MB  {1}" -f ($_.Length / 1MB), $_.FullName }
 }

@@ -49,6 +49,30 @@ typedef DevicesRunner = Future<Map<String, dynamic>> Function(
 Future<Map<String, dynamic>> _realRunner(EngineCommand cmd, List<String> args, EventCallback onEvent, Duration timeout) =>
     Engine(cmd).run(['devices', ...args], onEvent: onEvent, withBackend: false, timeout: timeout);
 
+/// What the user can do to get a faster (or any) graphics card path, shown under the check with one button.
+enum AdviceKind { nvidiaDriver, gpuDriver, nvidiaPack }
+
+class Advice {
+  const Advice(this.kind, this.text, this.url, this.button);
+  final AdviceKind kind;
+  final String text; // one or two plain sentences: what is wrong, what it gives
+  final String url; // the official page the button opens
+  final String button;
+}
+
+/// Official driver pages by vendor (the adapter name decides).
+const nvidiaDriverUrl = 'https://www.nvidia.com/tr-tr/drivers/';
+const amdDriverUrl = 'https://www.amd.com/en/support/download/drivers.html';
+const intelDriverUrl = 'https://www.intel.com/content/www/us/en/support/detect.html';
+const releasesUrl = 'https://github.com/ZoriaSoft/zoria-blur/releases/latest';
+
+String driverUrlFor(String adapterName) {
+  final n = adapterName.toLowerCase();
+  if (n.contains('nvidia') || n.contains('geforce') || n.contains('quadro') || n.contains('rtx')) return nvidiaDriverUrl;
+  if (n.contains('amd') || n.contains('radeon')) return amdDriverUrl;
+  return intelDriverUrl;
+}
+
 class CheckResult {
   CheckResult(this.cmd, this.device, {required this.why, this.probeFailed = false});
   final EngineCommand cmd;
@@ -81,6 +105,12 @@ class SystemCheck extends ChangeNotifier {
   bool _nvidia = false;
   bool _cudaFromCudaEngine = false;
   final List<String> notes = []; // fallbacks that happened during the test run
+  String? nvidiaDriver; // NVIDIA's own driver number ('560.94'), when an NVIDIA card is in
+  String? _cudaReason; // last reason the engine gave for the CUDA row
+  List<String> _gpuNames = const [];
+
+  /// One thing the user can do for a faster path (null when the best path already works).
+  Advice? advice;
 
   CheckRow row(String id) => rows.firstWhere((r) => r.id == id);
   int get doneCount => rows.where((r) => r.done).length;
@@ -101,6 +131,10 @@ class SystemCheck extends ChangeNotifier {
     _nvidia = false;
     _cudaFromCudaEngine = false;
     notes.clear();
+    nvidiaDriver = null;
+    _cudaReason = null;
+    _gpuNames = const [];
+    advice = null;
   }
 
   /// Full check over [engines] (EngineLocator order: optional CUDA build first, then the main build).
@@ -167,10 +201,33 @@ class SystemCheck extends ChangeNotifier {
         r.set(CheckState.missing, S.noAnswer, label: S.stUnknown);
       }
     }
+    advice = _adviceFor(res);
     result = res;
     running = false;
     notifyListeners();
     return res;
+  }
+
+  /// The one step that would make this PC faster, in the order that matters: an NVIDIA card held back by its driver,
+  /// an NVIDIA card this install has no NVIDIA engine for, a card DirectML could not use.
+  Advice? _adviceFor(CheckResult res) {
+    if (res.device.chosen == 'cuda') return null;
+    final nvName = _gpuNames.where((n) => n.toLowerCase().contains('nvidia')).firstOrNull;
+    if (_nvidia && _cudaReason == 'old_driver') {
+      return Advice(AdviceKind.nvidiaDriver, S.adviceOldNvidia(nvidiaDriver ?? '?'), nvidiaDriverUrl, S.adviceDriverButton);
+    }
+    if (_nvidia && row('cuda').state == CheckState.failed) {
+      return Advice(AdviceKind.nvidiaDriver, S.adviceCudaFailed, nvidiaDriverUrl, S.adviceDriverButton);
+    }
+    if (_nvidia && (_cudaReason == 'not_installed' || row('cuda').detail == S.cudaNotShipped)) {
+      return const Advice(AdviceKind.nvidiaPack, S.adviceNvidiaPack, releasesUrl, S.adviceNvidiaPackButton);
+    }
+    final dml = row('dml');
+    if (res.device.chosen == 'cpu' && dml.state == CheckState.failed && _gpuNames.isNotEmpty) {
+      final name = _gpuNames.firstWhere((n) => !n.toLowerCase().contains('nvidia'), orElse: () => nvName ?? _gpuNames.first);
+      return Advice(AdviceKind.gpuDriver, S.adviceDmlFailed, driverUrlFor(name), S.adviceDriverButton);
+    }
+    return null;
   }
 
   void _closeOpen({required bool fromCuda}) {
@@ -219,7 +276,9 @@ class SystemCheck extends ChangeNotifier {
       case 'gpus':
         _info(row('gpus'), status, () {
           final names = [for (final n in (ev['names'] as List? ?? const [])) DeviceInfo.cleanName('$n')];
+          _gpuNames = names;
           _nvidia = names.any((n) => n.toLowerCase().contains('nvidia'));
+          nvidiaDriver ??= ev['nvidia_driver'] as String?;
           if (names.isEmpty) {
             row('gpus').set(CheckState.missing, S.gpusNone);
           } else {
@@ -231,6 +290,8 @@ class SystemCheck extends ChangeNotifier {
         // the CUDA build owns this row; the main build (no CUDA inside) only fills it when there is no CUDA build
         if (!cuda && (_cudaFromCudaEngine || r.done)) return;
         if (cuda) _cudaFromCudaEngine = true;
+        if (status != 'checking') _cudaReason = ev['reason'] as String? ?? _cudaReason;
+        nvidiaDriver ??= ev['driver'] as String?;
         _backend(r, status, ev, notShipped: _nvidia || ev['nvidia_present'] == true ? S.cudaNotShipped : S.cudaNoNvidia,
             failed: S.cudaFailed, notShippedIsMissing: true);
       case 'dml':
@@ -290,7 +351,13 @@ class SystemCheck extends ChangeNotifier {
           _ => notShipped,
         });
       case 'failed':
-        r.set(CheckState.failed, reason == 'no_model' ? S.errModels : failed);
+        r.set(
+            CheckState.failed,
+            switch (reason) {
+              'no_model' => S.errModels,
+              'old_driver' => S.cudaOldDriver('${ev['driver'] ?? '?'}', '${ev['min_driver'] ?? '527.41'}'),
+              _ => failed,
+            });
     }
   }
 }

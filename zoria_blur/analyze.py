@@ -49,7 +49,14 @@ def _crop_for_thumb(img, box, size=160):
     if c.size == 0:
         return None
     sc = size / max(c.shape[:2])
-    return cv2.resize(c, (max(1, int(c.shape[1] * sc)), max(1, int(c.shape[0] * sc))), interpolation=cv2.INTER_AREA)
+    # far faces (10-30 px) are enlarged for the person card: cubic keeps them readable, area is for shrinking
+    interp = cv2.INTER_CUBIC if sc > 1 else cv2.INTER_AREA
+    return cv2.resize(c, (max(1, int(c.shape[1] * sc)), max(1, int(c.shape[0] * sc))), interpolation=interp)
+
+
+# Thumbnail crops of faces that got no embedding (too small or too unsure for ArcFace) still count, so a person made
+# only of far-away faces gets a picture too; they rank below every embedded crop (quality shifted by this much).
+NO_EMB_CROP_SHIFT = 2.0
 
 
 def _split_identity_switches(obs, embs, frames_e, min_side=3, drop=0.15):
@@ -234,18 +241,26 @@ def analyze(video: Path, out_dir: Path, ffmpeg: str, *, backend="cpu", threads=0
         for i in range(len(dets)):
             if weak_thresh <= dets[i, 4] < det_thresh + 0.05 and dets[i, 2] - dets[i, 0] >= 5:
                 weak_raw.append((idx, [round(float(v), 1) for v in dets[i, :4]], round(float(dets[i, 4]), 3)))
-        # thumbnail candidates: best crop per ~1 s bucket per track (keeps time diversity)
+        # thumbnail candidates: best crop per ~1 s bucket per track (keeps time diversity). Every observed face counts;
+        # faces without an embedding (far / unsure) rank below embedded ones but still give the person a picture
+        # (0.1.9 kept embedded faces only: in crowd videos a third of the people showed an empty card).
         bucket = int(idx // max(1, int(round(info.fps_float))))
         for t in tracker.tracks:
             if t.obs and t.obs[-1][0] == idx:
-                key = (idx, t.obs[-1][3])
+                di = t.obs[-1][3]
+                key = (idx, di)
                 if key in det_embs:
                     q = det_embs[key][1]
-                    b = crop_heaps.setdefault(t.id, {})
-                    if bucket not in b or q > b[bucket][0]:
-                        c = _crop_for_thumb(frame, t.obs[-1][1])
-                        if c is not None:
-                            ok, buf = cv2.imencode(".jpg", c, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                elif 0 <= di < len(dets):
+                    q = face_quality(dets[di], kps[di]) * float(dets[di, 4]) - NO_EMB_CROP_SHIFT
+                else:
+                    continue
+                b = crop_heaps.setdefault(t.id, {})
+                if bucket not in b or q > b[bucket][0]:
+                    c = _crop_for_thumb(frame, t.obs[-1][1])
+                    if c is not None:
+                        ok, buf = cv2.imencode(".jpg", c, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                        if ok:
                             b[bucket] = (q, idx, buf.tobytes())
         n_det_frames += 1
         if progress and k % 10 == 0:
@@ -278,11 +293,13 @@ def analyze(video: Path, out_dir: Path, ffmpeg: str, *, backend="cpu", threads=0
                 emb_store[f"t{tid}_q"] = np.array([e_list[i][1][1] for i in sel], np.float32)
                 emb_store[f"t{tid}_f"] = np.array([Fe[i] for i in sel], np.int32)
             crops = []
-            for q, f, jpg in sorted(crop_heaps.get(t.id, {}).values(), key=lambda x: -x[0])[:24]:
-                if f in fr:
-                    name = f"track_{tid:04d}_f{f:06d}.jpg"
-                    (out_dir / "crops" / name).write_bytes(jpg)
-                    crops.append({"frame": f, "quality": round(q, 4), "file": name})
+            # this part's own crops first, then the best 24 (0.1.9 cut to 24 before filtering, so after an identity
+            # split one part could be left with no crop at all)
+            own = [c for c in crop_heaps.get(t.id, {}).values() if c[1] in fr]
+            for q, f, jpg in sorted(own, key=lambda x: -x[0])[:24]:
+                name = f"track_{tid:04d}_f{f:06d}.jpg"
+                (out_dir / "crops" / name).write_bytes(jpg)
+                crops.append({"frame": f, "quality": round(q, 4), "file": name})
             tracks.append({
                 "id": tid,
                 "person_id": 0,

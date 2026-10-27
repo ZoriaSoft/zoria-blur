@@ -220,6 +220,20 @@ void main() {
           expect(find.byKey(const ValueKey('export')), findsOneWidget);
           expect(find.byKey(const ValueKey('device-chip')), findsOneWidget);
           expect(find.text(S.menuFile), findsOneWidget);
+          // the result screen at the same size, worst case: long file name and several leak moments
+          st
+            ..stage = Stage.done
+            ..outputPath = 'C:\\Users\\kullanici\\Videolar\\cok uzun bir video dosyasi adi ile birlikte_bulanik.mp4'
+            ..qa = {'leak_ranges': [], 'risky': []}
+            ..leaks = [
+              for (var i = 0; i < 6; i++)
+                Risk.fromJson({'start_s': 1.0 + i * 2, 'end_s': 1.5 + i * 2}, severe: true)
+            ];
+          st.dismissError();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(tester.takeException(), isNull, reason: 'done $size $b');
+          expect(find.byKey(const ValueKey('export-done')), findsOneWidget);
+          expect(find.byKey(const ValueKey('done-fix')), findsOneWidget);
         }
       }
     });
@@ -258,7 +272,7 @@ void main() {
       }
     });
 
-    testWidgets('export progress and result are a panel over the editor', (tester) async {
+    testWidgets('export progress is a panel over the editor; the result gets its own screen', (tester) async {
       final st = _editing()..selected.add(1);
       st.stage = Stage.exporting;
       st.progress = 0.3;
@@ -281,9 +295,24 @@ void main() {
       st.dismissError();
       await tester.pump();
       expect(find.text(S.qaClean), findsOneWidget);
-      expect(find.text(S.openVideo), findsOneWidget);
+      // no modal any more: the sidebar's "Video aç…" stays usable, and the result has its own next steps
+      expect(find.byKey(const ValueKey('export-progress')), findsNothing);
+      expect(find.byKey(const ValueKey('done-new-video')), findsOneWidget);
+      expect(find.text(S.newVideo), findsOneWidget);
       expect(find.text(S.openFolder), findsOneWidget);
-      await tester.tap(find.text(S.close));
+      expect(find.byKey(const ValueKey('result-source')), findsOneWidget);
+      final open = tester.widget<OutlinedButton>(find.byKey(const ValueKey('sidebar-open')));
+      expect(open.onPressed, isNotNull);
+      // a leak: the main action becomes the fix, "Yeni video" stays one click away
+      st.leaks = [Risk.fromJson({'type': 'leak', 'start_s': 1.0, 'end_s': 1.4, 'start_frame': 25, 'end_frame': 35}, severe: true)];
+      st.dismissError();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('done-fix')), findsOneWidget);
+      expect(find.byKey(const ValueKey('done-new-video')), findsOneWidget);
+      st.leaks = [];
+      st.dismissError();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('done-back')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(st.stage, Stage.editing);
       expect(find.byKey(const ValueKey('export-done')), findsNothing);

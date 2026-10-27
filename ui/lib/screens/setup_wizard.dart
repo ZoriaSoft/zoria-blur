@@ -238,6 +238,10 @@ class _SetupWizardState extends State<SetupWizard> {
           warn: res.probeFailed,
           text: '${S.resultTitle}: ${_deviceLine(res)}. ${res.why}',
         ),
+        if (check.advice != null) ...[
+          const SizedBox(height: Sp.s),
+          _AdviceCard(advice: check.advice!, st: st),
+        ],
       ],
     ]);
   }
@@ -294,6 +298,10 @@ class _SetupWizardState extends State<SetupWizard> {
           ]),
         ),
       ]),
+      if (check.advice != null) ...[
+        const SizedBox(height: Sp.m),
+        _AdviceCard(advice: check.advice!, st: st),
+      ],
       const SizedBox(height: Sp.l),
       Divider(height: 1, color: c.border),
       const SizedBox(height: Sp.m),
@@ -505,6 +513,51 @@ class _CheckRowView extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
             ),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+/// The one thing that would make this PC faster (old driver, missing NVIDIA pack), with the button that does it.
+class _AdviceCard extends StatelessWidget {
+  const _AdviceCard({required this.advice, required this.st});
+  final Advice advice;
+  final AppState st;
+  @override
+  Widget build(BuildContext context) {
+    final c = context.pal;
+    return Container(
+      key: const ValueKey('check-advice'),
+      padding: const EdgeInsets.all(Sp.m),
+      decoration: BoxDecoration(
+        color: c.warnSoft,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: c.warn.withValues(alpha: 0.35)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(Icons.tips_and_updates_outlined, size: 18, color: c.warn),
+        const SizedBox(width: Sp.s),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(S.adviceTitle, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.text)),
+            const SizedBox(height: 2),
+            Text(advice.text, style: TextStyle(fontSize: 12.5, color: c.text, height: 1.35)),
+            const SizedBox(height: Sp.s),
+            Wrap(spacing: Sp.s, runSpacing: Sp.xs, children: [
+              FilledButton.tonalIcon(
+                key: const ValueKey('advice-open'),
+                onPressed: () => st.openUrl(advice.url),
+                icon: const Icon(Icons.open_in_new, size: 16),
+                label: Text(advice.button),
+              ),
+              TextButton(
+                key: const ValueKey('advice-recheck'),
+                onPressed: st.check.running ? null : st.rerunSystemCheck,
+                child: const Text(S.adviceRecheck),
+              ),
+            ]),
           ]),
         ),
       ]),

@@ -14,6 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .analyze import _crop_for_thumb
 from .bridge import MAX_LOST, _step
 from .video_io import FrameReader, probe
 
@@ -62,12 +63,15 @@ def add_box(video: Path, proj, ffmpeg: str, *, person: int, frame: int, box, max
             for f, b in zip(t["frames"], t["boxes"]):
                 others.setdefault(int(f), []).append(b)
     grays = {}
+    crop = None
     for k, fr in enumerate(FrameReader(probe(Path(video), ffmpeg), ffmpeg, start_frame=lo)):
         i = lo + k                 # input-side seek lands exactly on frame `lo` (tests/test_cli_ui.py)
         if i > hi:
             break
         if i >= lo:
             grays[i] = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+        if i == frame:
+            crop = _crop_for_thumb(fr, [x1, y1, x2, y2])
     fw = [grays[i] for i in range(frame, hi + 1)]
     bw = [grays[i] for i in range(frame, lo - 1, -1)]
     exf = [others.get(i, []) for i in range(frame, hi + 1)]
@@ -79,10 +83,20 @@ def add_box(video: Path, proj, ffmpeg: str, *, person: int, frame: int, box, max
         res[frame - k] = b
     frames = sorted(res)
     tid = max([t["id"] for t in proj.tracks] + [0]) + 1
+    # the marked frame is the manual track's picture, so a person made only of marked faces has a card picture too
+    # (ranked below detector crops of the same person: those are sharper and frontal)
+    crops = []
+    if crop is not None:
+        ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if ok:
+            name = f"track_{tid:04d}_f{frame:06d}.jpg"
+            (proj.root / "crops").mkdir(parents=True, exist_ok=True)
+            (proj.root / "crops" / name).write_bytes(buf.tobytes())
+            crops.append({"frame": frame, "quality": -1.0, "file": name})
     proj.tracks.append({
         "id": tid, "person_id": person, "manual": True,
         "frames": frames, "boxes": [[round(float(v), 1) for v in res[f]] for f in frames],
-        "scores": [1.0] * len(frames), "mean_score": 1.0, "crops": [], "confidence": 1.0,
+        "scores": [1.0] * len(frames), "mean_score": 1.0, "crops": crops, "confidence": 1.0,
     })
     proj.data.setdefault("manual", []).append({"person": person, "frame": frame, "box": [x1, y1, x2, y2],
                                                "track": tid, "frames": [frames[0], frames[-1]]})

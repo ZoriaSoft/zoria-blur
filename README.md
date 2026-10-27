@@ -11,7 +11,10 @@ automatic check that looks for any face that should have been blurred and is sti
 > **Türkçe dil desteği:** The Windows app's interface is fully in Turkish.
 > The engine, its command line and this documentation are in English.
 
-**Download:** the Windows installer is on the [Releases page](https://github.com/ZoriaSoft/zoria-blur/releases/latest) (Windows 10/11, 64-bit, works offline).
+**Download:** two Windows installers are on the [Releases page](https://github.com/ZoriaSoft/zoria-blur/releases/latest) (Windows 10/11, 64-bit, work offline):
+
+- `ZoriaBlur-Setup-<version>.exe` – for most PCs. Uses any graphics card through DirectML (AMD, Intel, NVIDIA) or the CPU.
+- `ZoriaBlur-Setup-<version>-NVIDIA.exe` – much larger, adds the CUDA engine for NVIDIA cards (fastest on NVIDIA; needs driver 527.41 or newer). The app tells you if your PC would benefit from it.
 
 ## Examples
 
@@ -73,7 +76,11 @@ also relies on body tracking (heads are blurred from the body box when no face i
 - **Fix mistakes.** Merge two people, split a wrongly grouped track, rename people, or draw one box
   where a face was missed (optical flow carries it forward).
 - **Runs on what you have.** NVIDIA GPU (CUDA) first, then DirectML (AMD, Intel and other GPUs),
-  then the CPU. The app checks your PC on first start and picks the fastest option.
+  then the CPU. The app checks your PC on first start, picks the fastest option, and tells you in plain
+  words when an outdated graphics driver holds it back (with a link to the official driver page).
+- **Hardware encoding.** The blurred video is encoded on the graphics card when it can (NVENC, Quick Sync,
+  AMF; each checked with a test encode first), otherwise with x264. If the card's encoder fails mid-export,
+  the file is redone with x264, never left half-written.
 - **Keeps the audio.** The original audio track is copied into the blurred video untouched.
 
 ## The Windows app (Turkish UI)
@@ -85,7 +92,8 @@ The desktop app (`ui/`, Flutter for Windows) is a one-window video tool in Turki
 1. **Video aç** – open or drop a video (mp4, mov, mkv, avi, webm and more).
 2. **Başlat** – the face search runs with progress, phase and remaining time.
 3. **Kişiler** – pick people from their thumbnails, merge or split them, rename them.
-4. **Bulanıklaştır ve kaydet** – export; the result panel shows the leak check in plain words.
+4. **Bulanıklaştır ve kaydet** – export; the result opens right in the app: play it with sound,
+   switch to the original at the same moment, see the leak check in plain words, then start a new video.
 
 It has a live blurred preview, a timeline with one row per person and markers for moments worth a
 second look, light and dark themes, and a first-run system check (*Sistem kontrolü*) that tests CUDA,
@@ -153,7 +161,7 @@ Requirements: Windows, Flutter (Windows desktop), Python 3.12, Inno Setup 6.
 ```powershell
 # optional NVIDIA engine first
 powershell -ExecutionPolicy Bypass -File packaging\build_cuda_engine.ps1
-# engine (PyInstaller, DirectML) + Flutter app -> dist\ZoriaBlur, then the installer
+# engine (PyInstaller, DirectML) + Flutter app -> dist\ZoriaBlur, then both installers
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 ```
 

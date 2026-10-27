@@ -7,6 +7,10 @@
 ; Uninstall removes the program; the user's logs/projects in %LOCALAPPDATA%\ZoriaBlur stay unless the user
 ; says yes to the question at the end of an interactive uninstall (silent uninstalls always keep them).
 
+; Flavor: "" = the light installer (no NVIDIA engine), "-NVIDIA" = with engine-cuda (build_windows.ps1 makes both)
+#ifndef Flavor
+  #define Flavor ""
+#endif
 #ifndef SourceDir
   #define SourceDir "..\dist\ZoriaBlur"
 #endif
@@ -55,7 +59,7 @@ UninstallDisplayName=Zoria Blur
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=..\dist
-OutputBaseFilename=ZoriaBlur-Setup-{#ShortVersion}
+OutputBaseFilename=ZoriaBlur-Setup-{#ShortVersion}{#Flavor}
 ; close a running Zoria Blur / engine before replacing or removing its files
 CloseApplications=yes
 CloseApplicationsFilter=*.exe,*.dll

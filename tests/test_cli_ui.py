@@ -133,6 +133,37 @@ def test_project_commands(video, proj):
     assert {p["id"]: p["name"] for p in j["persons"]}[2] == "Ayşe Yılmaz"
 
 
+def test_addbox_gets_a_picture(video, proj):
+    """A person made only of a hand-marked face still gets a card picture (0.1.9 showed an empty card)."""
+    j, _ = cli("addbox", video, "-p", proj, "--person", 0, "--frame", 40, "--box", "120,60,180,140")
+    assert j["ok"], j
+    j, _ = cli("persons", proj)
+    new = max(j["persons"], key=lambda p: p["id"])
+    assert new["thumbnails"], new
+    assert all((Path(j["project"]) / t).is_file() for t in new["thumbnails"])
+
+
+def test_render_encoder_fallback(video, proj, d):
+    """A graphics-card encoder that fails on the real video never leaves a broken file: the export is redone with
+    x264 (here NVENC is forced on whatever PC runs the test; without NVIDIA it fails at once)."""
+    import cv2
+    from zoria_blur.project import Project
+    from zoria_blur.renderer import render
+    from zoria_blur.video_io import encoder_works
+    out = d / "enc_test.mp4"
+    res = render(video, Project.load(proj), out, FF, mode="blur-except", persons=[], qa=False, encoder="nvenc")
+    assert out.is_file() and res["frames"] == 100, res
+    if encoder_works(FF, "nvenc"):
+        assert res["encoder"] == "nvenc" and "encoder_fallback" not in res, res
+    else:
+        assert res["encoder"] == "x264" and res["encoder_fallback"]["from"] == "nvenc", res
+    cap = cv2.VideoCapture(str(out))
+    assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 100
+    cap.release()
+    j, _ = cli("render", video, "-p", proj, "-o", d / "enc_cli.mp4", "--mode", "blur-except", "--no-qa")
+    assert j["ok"] and j["encoder"] in ("x264", "nvenc", "qsv", "amf"), j
+
+
 def test_preview(video, proj, d):
     out, org = d / "prev.png", d / "orig.png"
     j, r = cli("preview", video, "-p", proj, "--frame", 60, "--mode", "blur-selected", "--persons", 2,
@@ -231,6 +262,8 @@ if __name__ == "__main__":
         test_probe(v); print("ok probe")
         test_devices_system_check(); print("ok devices (system check events, test run, fingerprint)")
         test_project_commands(v, p); print("ok project commands")
+        test_addbox_gets_a_picture(v, p); print("ok addbox picture")
+        test_render_encoder_fallback(v, p, d); print("ok render encoder + fallback")
         test_preview(v, p, d); print("ok preview")
         test_live_preview(v, p, d); print("ok live preview (plan + frames)")
         test_closed_stdout_exits_quietly(); print("ok closed stdout = quiet exit")
